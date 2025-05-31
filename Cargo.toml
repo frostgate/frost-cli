@@ -1,0 +1,17 @@
+[package]
+name = "frost-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { workspace = true }
+async-trait = "0.1"
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+frostgate-circuits = { path = "../frostgate-circuits" }
+frostgate-zkip  = { path = "../frostgate-zkip" }
+ethers.workspace = true
+solana-sdk = "2.2.2"
+bincode.workspace = true

@@ -1,11 +1,15 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(unused_must_use)]
+#![allow(dead_code)]
 
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
 
 use frostgate_circuits::sp1::{Sp1Plug, Sp1PlugConfig};
+use frostgate_zkip::zkplug::ZkPlug;
 use anyhow::Context;
 
 #[derive(Parser)]
@@ -56,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
             // Create SP1 config with optional build directory
             let mut config = Sp1PlugConfig::default();
             if let Some(dir) = build_dir {
-                config.build_dir = dir;
+                config.build_dir = Some(dir);
             }
 
             // Initialize the SP1 plug

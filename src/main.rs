@@ -7,10 +7,11 @@
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use frostgate_circuits::sp1::{Sp1Plug, Sp1PlugConfig};
-use frostgate_zkip::zkplug::ZkPlug;
-use anyhow::Context;
+use frostgate_circuits::sp1::{Sp1Backend, Sp1Config};
+use frostgate_zkip::{ZkBackend, ZkBackendExt, types::ZkConfig};
+use anyhow::{Context, Result};
 
 #[derive(Parser)]
 #[command(name = "frost-cli")]
@@ -36,6 +37,9 @@ enum Commands {
         /// Optional build directory for caching
         #[arg(short, long)]
         build_dir: Option<PathBuf>,
+        /// Use GPU acceleration if available
+        #[arg(long)]
+        gpu: bool,
     },
     /// Verify a ZK proof using the SP1 backend
     Verify {
@@ -52,81 +56,63 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Prove { program, input, output, build_dir } => {
-            // Create SP1 config with optional build directory
-            let mut config = Sp1PlugConfig::default();
-            if let Some(dir) = build_dir {
-                config.build_dir = Some(dir);
-            }
-
-            // Initialize the SP1 plug
-            let mut plug = Sp1Plug::new(config);
+        Commands::Prove { program, input, output, build_dir, gpu } => {
+            // Create SP1 backend with config
+            let config = Sp1Config {
+                max_concurrent: Some(num_cpus::get()),
+                cache_size: 100,
+                use_gpu: gpu,
+            };
+            let backend = Arc::new(Sp1Backend::with_config(config));
 
             // Read program and input
-            println!("Reading program from {:?}", program);
             let program_bytes = fs::read(&program)
-                .with_context(|| format!("Failed to read program from {:?}", program))?;
-
-            println!("Reading input from {:?}", input);
+                .with_context(|| format!("Failed to read program file: {}", program.display()))?;
             let input_bytes = fs::read(&input)
-                .with_context(|| format!("Failed to read input from {:?}", input))?;
+                .with_context(|| format!("Failed to read input file: {}", input.display()))?;
 
-            println!("Generating proof...");
-            let result = plug.execute(&program_bytes, &input_bytes, None, None)
+            // Generate proof
+            let (proof_bytes, metadata) = backend.prove(&program_bytes, &input_bytes, None)
                 .await
                 .with_context(|| "Failed to generate proof")?;
 
-            // Serialize and save the proof
-            let proof_bytes = bincode::serialize(&result.proof)
-                .with_context(|| "Failed to serialize proof")?;
-
+            // Write proof to output file
             fs::write(&output, &proof_bytes)
-                .with_context(|| format!("Failed to write proof to {:?}", output))?;
+                .with_context(|| format!("Failed to write proof to: {}", output.display()))?;
 
-            println!(
-                "✅ Proof generated and saved to {:?} ({} bytes)",
-                output,
-                proof_bytes.len()
-            );
-        }
+            println!("Successfully generated proof:");
+            println!("  Size: {} bytes", metadata.proof_size);
+            println!("  Program hash: {}", metadata.program_hash);
+            println!("  Generation time: {:?}", metadata.generation_time);
+            Ok(())
+        },
         Commands::Verify { program, proof, input } => {
-            // Initialize SP1 plug with default config for verification
-            let mut plug = Sp1Plug::new(Sp1PlugConfig::default());
+            // Create SP1 backend with default config
+            let backend = Arc::new(Sp1Backend::new());
 
-            // Read necessary files
-            println!("Reading program from {:?}", program);
+            // Read files
             let program_bytes = fs::read(&program)
-                .with_context(|| format!("Failed to read program from {:?}", program))?;
-
-            println!("Reading proof from {:?}", proof);
+                .with_context(|| format!("Failed to read program file: {}", program.display()))?;
             let proof_bytes = fs::read(&proof)
-                .with_context(|| format!("Failed to read proof from {:?}", proof))?;
-
-            println!("Reading input from {:?}", input);
+                .with_context(|| format!("Failed to read proof file: {}", proof.display()))?;
             let input_bytes = fs::read(&input)
-                .with_context(|| format!("Failed to read input from {:?}", input))?;
+                .with_context(|| format!("Failed to read input file: {}", input.display()))?;
 
-            // Deserialize the proof
-            let proof = bincode::deserialize(&proof_bytes)
-                .with_context(|| "Failed to deserialize proof")?;
-
-            println!("Verifying proof...");
-            let is_valid = plug.verify(&proof, Some(&input_bytes), None)
+            // Verify proof
+            let result = backend.verify(&program_bytes, &proof_bytes, None)
                 .await
                 .with_context(|| "Failed to verify proof")?;
 
-            if is_valid {
-                println!("✅ Proof verified successfully!");
+            if result {
+                println!("Proof verification successful!");
             } else {
-                println!("❌ Proof verification failed!");
-                anyhow::bail!("Proof verification failed");
+                println!("Proof verification failed!");
             }
+            Ok(())
         }
     }
-
-    Ok(())
 }
